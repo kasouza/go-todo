@@ -1,10 +1,9 @@
 package main
 
 import (
-	"bufio"
 	"flag"
 	"fmt"
-	"log"
+	"github.com/kasouza/go-todo/taskserial"
 	"os"
 	"strings"
 	"unicode/utf8"
@@ -60,53 +59,6 @@ func printHelp() {
 	fmt.Println("CU")
 }
 
-// A wrapper to `os.OpenFile()` to deal with errors
-func openFileWithFlags(filename string, flags int) *os.File {
-	file, err := os.OpenFile(filename, flags, 0666)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return file
-}
-
-// Read tasks from a file and return them in a `map[name]description`
-// If the file does not exists, it will create one.
-func readTasks(filename string) map[string]string {
-	file := openFileWithFlags(filename, os.O_RDONLY|os.O_CREATE)
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	tasks := make(map[string]string, 0)
-
-	for scanner.Scan() {
-		task := scanner.Text()
-		words := strings.Fields(task)
-
-		tasks[words[0]] = strings.Join(words[1:], " ")
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Fatal(err)
-	}
-
-	return tasks
-}
-
-// Write the given tasks to a file, overriding its content or
-// creating it if necessary
-func writeTasks(filename string, tasks map[string]string) {
-	file := openFileWithFlags(filename, os.O_WRONLY|os.O_TRUNC|os.O_CREATE)
-	defer file.Close()
-
-	writer := bufio.NewWriter(file)
-	defer writer.Flush()
-
-	for name, description := range tasks {
-		fmt.Fprintf(writer, "%v %v\n", name, description)
-	}
-}
-
 // Add a new task or update an old one
 func setItem(filename string, args []string) {
 	// Unmatched <task-name> <task-description>
@@ -115,30 +67,28 @@ func setItem(filename string, args []string) {
 		return
 	}
 
-	tasks := readTasks(filename)
+	tasks := taskserial.ReadTasks(filename)
 
 	for task := 1; task < len(args)-1; task += 2 {
 		name := args[task]
-		if len(strings.Fields(name)) > 1 {
-			log.Fatal("Task name need to be a single word")
-		}
-
 		description := args[task+1]
 
-		tasks[name] = description
+		tasks[name] = taskserial.Task{name, description}
 	}
 
-	writeTasks(filename, tasks)
+	if len(tasks) > 0 {
+		taskserial.WriteTasks(filename, tasks)
+	}
 }
 
 // Remove one task
 func removeItem(filename string, args []string) {
 	taskName := args[1]
 
-	tasks := readTasks(filename)
+	tasks := taskserial.ReadTasks(filename)
 	delete(tasks, taskName)
 
-	writeTasks(filename, tasks)
+	taskserial.WriteTasks(filename, tasks)
 }
 
 // Print one task
@@ -150,31 +100,28 @@ func getItem(filename string, args []string) {
 
 	taskName := args[1]
 
-	tasks := readTasks(filename)
+	tasks := taskserial.ReadTasks(filename)
+	task, isInMap := tasks[taskName]
 
-	printTable(map[string]string{taskName: tasks[taskName]}, "Task", "Description")
+	tasksTable := make(map[string]string)
+
+	if isInMap {
+		tasksTable[taskName] = task.Description
+	}
+
+	printTable(tasksTable, "Task", "Description")
 }
 
 // Print all the tasks in a table
 func printList(filename string) {
-	file := openFileWithFlags(filename, os.O_RDONLY)
-	defer file.Close()
+	tasks := taskserial.ReadTasks(filename)
+	tasksTable := make(map[string]string)
 
-	scanner := bufio.NewScanner(file)
-	wordsTable := make(map[string]string)
-
-	for scanner.Scan() {
-		task := scanner.Text()
-		words := strings.Fields(task)
-
-		wordsTable[words[0]] = strings.Join(words[1:], " ")
+	for name, task := range tasks {
+		tasksTable[name] = task.Description
 	}
 
-	if err := scanner.Err(); err != nil {
-		log.Fatal(err)
-	}
-
-	printTable(wordsTable, "Task", "Description")
+	printTable(tasksTable, "Task", "Description")
 }
 
 func main() {
@@ -186,9 +133,7 @@ func main() {
 	flag.Parse()
 	args := flag.Args()
 
-	// Make sure the TODO list file exists
-	file := openFileWithFlags(filename, os.O_CREATE)
-	file.Close()
+	CreateFileIfNotExists(filename)
 
 	// If no command was given, print some help
 	if len(args) < 1 {
